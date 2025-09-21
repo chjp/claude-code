@@ -41,3 +41,9 @@ See our [data usage policies](https://docs.anthropic.com/en/docs/claude-code/dat
 We have implemented several safeguards to protect your data, including limited retention periods for sensitive information, restricted access to user session data, and clear policies against using feedback for model training.
 
 For full details, please review our [Commercial Terms of Service](https://www.anthropic.com/legal/commercial-terms) and [Privacy Policy](https://www.anthropic.com/legal/privacy).
+
+
+### Learning purpose
+prompt for codex or sonnet:
+
+i want to learn how to create ai agents. for this purpose, i cloned the claude code repo. i want you to investigate this repo and explain how it works from a high level. Afterwards, create a learning markdown document that describes the different components of the repository so that i can learn how it works step by step.
