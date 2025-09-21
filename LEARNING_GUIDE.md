@@ -235,6 +235,27 @@ tools: tool1, tool2       # Restricted tool access
 
 ## Implementation Details
 
+### Core Design Philosophy: Simplicity Over Complexity
+
+Based on internal analysis of Claude Code's architecture, the system follows a **"Keep Things Simple"** philosophy that prioritizes:
+- **Single control loop** over multi-agent systems
+- **LLM-based search** over traditional RAG
+- **Mixed tool granularity** (low, medium, and high-level tools)
+- **Heavy use of smaller models** (50%+ calls to Haiku)
+
+### Control Loop Architecture
+
+Claude Code uses a remarkably simple control flow:
+
+```
+Main Thread (Single Message History)
+    ├── Simple Tasks → Direct Tool Calls
+    └── Complex Tasks → Spawn Self as Sub-Agent (Max 1 Branch)
+                        └── Returns result to main thread
+```
+
+**Key Insight**: Despite the popularity of multi-agent systems, Claude Code maintains just one main thread with a maximum of one branch for sub-agents. This ensures debuggability and prevents context fragmentation.
+
 ### File Structure
 ```
 your-project/
@@ -242,12 +263,52 @@ your-project/
 │   ├── agents/           # Sub-agent definitions
 │   ├── commands/         # Custom slash commands
 │   ├── settings.local.json  # Local configuration
-│   └── CLAUDE.md        # Project context
+│   └── CLAUDE.md        # Project context (1000-2000 tokens typically)
 ├── .mcp.json            # MCP server configuration
 └── your-code/
 ```
 
+### Prompt Engineering Details
+
+**System Prompt Structure** (~2,800 tokens):
+- Tone and Style guidelines
+- Proactiveness rules
+- Task Management algorithms
+- Tool Usage Policy
+- Code Style conventions
+- Platform/OS information
+- Current date and working directory
+
+**Tool Descriptions** (~9,400 tokens):
+- Elaborate descriptions with examples
+- Good/bad example patterns
+- When to use each tool
+- Tool selection heuristics
+
 ### Configuration Examples
+
+**System Prompt XML Tags Usage:**
+```xml
+<system-reminder>
+This is a reminder that your todo list is currently empty. 
+DO NOT mention this to the user explicitly.
+</system-reminder>
+
+<good-example>
+pytest /foo/bar/tests
+</good-example>
+
+<bad-example>
+cd /foo/bar && pytest tests
+</bad-example>
+```
+
+**Steering Techniques:**
+```markdown
+# IMPORTANT: You MUST avoid using search commands like `find` and `grep`
+# VERY IMPORTANT: ALWAYS USE ripgrep at `rg` first
+# NEVER generate or guess URLs unless confident
+```
 
 **API Configuration:**
 ```bash
@@ -302,13 +363,92 @@ Always provide constructive feedback with specific examples.
 
 ## Advanced Features
 
-### 1. Headless Mode
+### 1. Tool Design Strategy
+
+Claude Code implements a **three-tier tool hierarchy**:
+
+**Low-Level Tools:**
+- `Bash`: Direct command execution
+- `Read/Write`: File operations
+- Basic Unix commands
+
+**Medium-Level Tools:**
+- `Edit`: Targeted file modifications
+- `Grep/Glob`: Optimized search operations
+- `LS`: Directory listing with context
+
+**High-Level Tools:**
+- `Task`: Sub-agent spawning
+- `WebFetch`: Complete web page retrieval
+- `TodoWrite/TodoRead`: Task management
+- `exit_plan_mode`: Session management
+
+**Tool Usage Frequency** (from analysis):
+1. Edit (most frequent)
+2. Read
+3. TodoWrite
+4. Grep/Glob
+5. Bash (when specialized tools don't fit)
+
+### 2. Search Implementation: LLM vs RAG
+
+Claude Code **rejects traditional RAG** in favor of LLM-powered search:
+
+```bash
+# Claude Code uses sophisticated regex with ripgrep
+rg "function.*authenticate" --type js -A 5 -B 5
+
+# Complex find commands
+find . -type f -name "*.py" -exec grep -l "import torch" {} \;
+
+# JSON structure analysis
+jq '.dependencies | keys' package.json | head -10
+```
+
+**Why LLM Search > RAG:**
+- No hidden failure modes (chunking, similarity functions)
+- Inspectable and debuggable commands
+- RL-learnable patterns
+- Mimics human search behavior
+- Handles diverse file types naturally
+
+### 3. Model Optimization Strategy
+
+**50%+ of calls use Claude 3.5 Haiku for:**
+- Reading large files
+- Parsing web pages
+- Processing git history
+- Summarizing conversations
+- Generating UI labels ("processing", "thinking", etc.)
+
+**Cost Optimization:**
+- Haiku is 70-80% cheaper than Sonnet/Opus
+- Use liberally for non-critical tasks
+- Reserve Opus for complex reasoning and planning
+
+### 4. Todo List Management
+
+Claude Code's self-managed todo list serves multiple purposes:
+- **Prevents context rot** in long sessions
+- **Maintains focus** on original objectives
+- **Enables course correction** mid-implementation
+- **Leverages interleaved thinking** for dynamic planning
+
+```markdown
+## Current Tasks
+- [x] Analyze authentication flow
+- [ ] Implement JWT validation
+- [ ] Add rate limiting
+- [ ] Write tests for auth endpoints
+```
+
+### 5. Headless Mode
 Run Claude Code without interactive prompts:
 ```bash
 claude -p "Fix all linting errors" --output-format stream-json
 ```
 
-### 2. Multi-Agent Orchestration
+### 6. Multi-Agent Orchestration
 ```bash
 # Sequential execution
 "Use backend-architect to design API, then frontend-developer to build UI"
@@ -317,7 +457,7 @@ claude -p "Fix all linting errors" --output-format stream-json
 "Have security-auditor and performance-engineer review simultaneously"
 ```
 
-### 3. GitHub Actions Integration
+### 7. GitHub Actions Integration
 Automate workflows with Claude Code in CI/CD:
 ```yaml
 - name: Claude Code Analysis
@@ -327,7 +467,7 @@ Automate workflows with Claude Code in CI/CD:
     prompt: "Review PR and suggest improvements"
 ```
 
-### 4. Hook System
+### 8. Hook System
 Control Claude's behavior with pre/post operation hooks:
 - **Pre-hooks**: Validate before actions
 - **Post-hooks**: Cleanup or notifications
@@ -338,43 +478,87 @@ Control Claude's behavior with pre/post operation hooks:
 ## Best Practices
 
 ### 1. Context Management
-- Use `/clear` between unrelated tasks
-- Create focused `CLAUDE.md` files
-- Leverage sub-agents for complex problems
+- **Use `/clear` frequently** between unrelated tasks to prevent context rot
+- **Leverage `CLAUDE.md`** as shared memory (typically 1000-2000 tokens)
+- **Spawn sub-agents** for complex problems to maintain focus
+- **Maintain todo lists** for multi-step workflows
 
-### 2. Security
+### 2. Prompt Engineering
+- **Use XML tags** for structure: `<system-reminder>`, `<good-example>`, `<bad-example>`
+- **Write explicit algorithms** with decision points
+- **Include platform context**: OS, working directory, recent commits
+- **"IMPORTANT/NEVER/ALWAYS"** still most effective for critical instructions
+- **Provide contrasting examples** to clarify preferences
+
+### 3. Tool Design
+- **Match tool granularity to frequency**: High-frequency operations deserve dedicated tools
+- **Provide fallbacks**: Bash for edge cases not covered by specialized tools
+- **Include extensive examples** in tool descriptions
+- **Optimize for debuggability** over cleverness
+
+### 4. Security
 - Never commit API keys
 - Use read-only MCP servers for production
 - Review permissions carefully
 - Isolate in containers when using `--dangerously-skip-permissions`
+- Enable manual approval for tool calls when using MCP with untrusted data
 
-### 3. Performance Optimization
-- Choose appropriate models (Haiku for simple, Opus for complex)
-- Use caching for repeated operations
-- Implement token limits for MCP outputs
+### 5. Performance Optimization
+- **Use Haiku aggressively** (70-80% cost savings):
+  - File reading and parsing
+  - Web content processing
+  - Git history analysis
+  - UI label generation
+- **Reserve Opus for**:
+  - Initial planning and architecture
+  - Complex multi-step reasoning
+  - Critical decision points
+- Implement token limits for MCP outputs (default: 25,000)
 - Break large tasks into smaller chunks
 
-### 4. Workflow Patterns
+### 6. Workflow Patterns
 
 **Test-Driven Development:**
-1. Write tests with Claude
+1. Write tests with explicit "no mock implementation" instruction
 2. Verify tests fail
 3. Implement code to pass tests
-4. Iterate until all pass
+4. Use sub-agents to verify implementation isn't overfitting
+5. Iterate until all pass
 
-**Feature Implementation:**
-1. Research and understand requirements
-2. Create technical design
-3. Implement with multi-file changes
-4. Test and validate
-5. Create PR with documentation
+**Feature Implementation (The Claude Code Way):**
+1. **Planning Phase** (Opus): Research and understand requirements
+2. **Todo Creation**: Build explicit task list
+3. **Implementation** (Sonnet): Execute with multi-file changes
+4. **Verification** (Haiku): Read and validate changes
+5. **Documentation**: Update README and create PR
 
 **Debugging Pattern:**
 1. Describe issue or paste error
-2. Claude analyzes codebase
-3. Identifies root cause
-4. Implements fix
-5. Verifies solution
+2. Use ripgrep/find for codebase analysis (not RAG)
+3. Spawn sub-agent for focused investigation if needed
+4. Implement fix with Edit tool
+5. Verify with smaller model
+
+**The "Claude.md Pattern":**
+```markdown
+# Project Context
+Tech stack: Next.js 15, TypeScript, Tailwind
+Database: PostgreSQL with Prisma
+
+# Preferences
+- NEVER use the pages directory
+- ALWAYS use app router
+- Prefer server components over client components
+- Use pnpm, not npm or yarn
+
+# Known Issues
+- Authentication flow requires specific header order
+- Database migrations must run in transaction
+
+# Architecture Decisions
+- Feature-based folder structure
+- Centralized error handling via middleware
+```
 
 ---
 
@@ -397,10 +581,29 @@ Control Claude's behavior with pre/post operation hooks:
 
 ## Summary
 
-Claude Code represents a paradigm shift in AI-assisted development. Rather than just providing suggestions, it acts as an autonomous development partner capable of:
-- Understanding complex codebases
-- Executing multi-step workflows
-- Integrating with existing tools
-- Coordinating specialized agents
+Claude Code represents a paradigm shift in AI-assisted development through its **commitment to simplicity**. Rather than complex multi-agent orchestration or opaque RAG systems, it succeeds through:
 
-Success with Claude Code comes from understanding its architecture, leveraging its extensibility through MCP, and developing effective workflows that combine human expertise with AI capabilities. Start simple, experiment often, and gradually incorporate more advanced features as you become comfortable with the system.
+### Core Principles That Make Claude Code Effective:
+
+1. **Architectural Simplicity**: One main loop, one branch maximum, one message history
+2. **Transparent Search**: LLM-powered ripgrep/find commands you can inspect and debug
+3. **Smart Model Usage**: 50%+ of calls to cheaper Haiku model, Opus only for planning
+4. **Tool Hierarchy**: Mixed granularity tools that match usage frequency
+5. **Self-Managed State**: Agent maintains its own todo list for focus and adaptability
+
+### Key Technical Insights:
+
+- **Token Distribution**: ~2,800 system prompt + ~9,400 tool descriptions + ~1,500 CLAUDE.md
+- **Control Flow**: Flat message history with optional single-branch sub-agent spawning
+- **Search Philosophy**: "LLM search is the camera vs. lidar of the AI era"
+- **Steering Method**: XML tags, markdown structure, and yes, "IMPORTANT" still works best
+
+### The "Bitter Lesson" for AI Agents:
+
+Just as in machine learning broadly, **simpler architectures that leverage model improvements** outperform complex hand-engineered systems. Claude Code's success comes from:
+- Building a good harness for the model
+- Letting the model do the heavy lifting
+- Avoiding excessive scaffolding that becomes technical debt
+- Maintaining debuggability and transparency
+
+Success with Claude Code—and AI agents generally—comes from understanding this philosophy: **Keep Things Simple, let the model shine in its wheelhouse, and resist the urge to over-engineer**. Start simple, experiment often, and gradually incorporate more advanced features only when they provide clear value.
