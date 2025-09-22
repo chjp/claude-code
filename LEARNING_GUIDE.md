@@ -233,28 +233,57 @@ tools: tool1, tool2       # Restricted tool access
 
 ---
 
-## Implementation Details
+## Implementation Details (Updated with Runtime Analysis)
 
 ### Core Design Philosophy: Simplicity Over Complexity
 
-Based on internal analysis of Claude Code's architecture, the system follows a **"Keep Things Simple"** philosophy that prioritizes:
-- **Single control loop** over multi-agent systems
-- **LLM-based search** over traditional RAG
-- **Mixed tool granularity** (low, medium, and high-level tools)
-- **Heavy use of smaller models** (50%+ calls to Haiku)
+Based on runtime analysis from reverse engineering efforts, Claude Code follows a **"Keep Things Simple"** philosophy with these confirmed patterns:
+
+### Actual Control Flow (from Runtime Analysis)
+
+The main loop follows this sequence:
+
+1. **Quota Check** (Haiku 3.5) - Lightweight check for available API quota
+2. **Topic Detection** (Haiku 3.5) - Determines if new topic (for UI updates)
+3. **System Reminder Injection** - Adds context before/after user messages
+4. **Core Workflow** (Sonnet 4) - Main processing loop
+5. **Context Compaction** (Sonnet 4) - When context gets too large
+6. **Todo Management** - JSON files in `~/.claude/todos/`
+7. **Sub-Agent Spawning** - For independent tasks (via Task tool)
+8. **Session Summarization** (Haiku 3.5) - For next conversation
+
+### Model Usage Distribution (Confirmed)
+- **Haiku 3.5**: Quota checks, topic detection, summarization (~50%+ of calls)
+- **Sonnet 4**: Core workflow, context compaction, main reasoning
+- **Opus 4.1**: Complex planning (less frequently used than expected)
+
+### Sub-Agent Architecture (Confirmed Design)
+
+Key insights about the sub-agent system:
+- **Main Agent Concept**: Always maintains a primary agent
+- **Task Extraction**: Sub-agents receive extracted tasks as initial prompts
+- **Result Integration**: Sub-agent results return as tool results to main
+- **Context Isolation**: "Dirty context" (failed searches, irrelevant reads) stays in sub-context
+- **Maximum Depth**: Single branch (depth=1) to maintain simplicity
+
+### Todo Memory System
+
+Claude Code implements short-term memory through:
+- JSON files stored in `~/.claude/todos/`
+- TodoWrite tool creates/updates these files
+- System reminder prompts check and load todos
+- Provides persistence across conversation turns
 
 ### Control Loop Architecture
-
-Claude Code uses a remarkably simple control flow:
 
 ```
 Main Thread (Single Message History)
     ├── Simple Tasks → Direct Tool Calls
-    └── Complex Tasks → Spawn Self as Sub-Agent (Max 1 Branch)
-                        └── Returns result to main thread
+    └── Complex Tasks → Task Tool → Sub-Agent (Max 1 Branch)
+                                      └── Returns final result only
 ```
 
-**Key Insight**: Despite the popularity of multi-agent systems, Claude Code maintains just one main thread with a maximum of one branch for sub-agents. This ensures debuggability and prevents context fragmentation.
+**Key Insight**: The sub-agent pattern is primarily for context optimization, not parallel processing. It isolates exploratory operations that generate lots of context noise.
 
 ### File Structure
 ```
@@ -572,10 +601,22 @@ Database: PostgreSQL with Prisma
 
 ## Resources
 
-- [Official Documentation](https://docs.claude.com/en/docs/claude-code/overview)
+### Official Documentation
+- [Claude Code Documentation](https://docs.claude.com/en/docs/claude-code/overview)
 - [MCP Protocol Specification](https://modelcontextprotocol.io)
-- [Community Examples](https://github.com/topics/claude-code-agents)
 - [Best Practices Guide](https://www.anthropic.com/engineering/claude-code-best-practices)
+
+### Community Analysis & Reverse Engineering
+- [MinusX Blog - Internal Architecture Analysis](https://minusx.ai/blog/decoding-claude-code/)
+- [Yuyz0112 - Runtime Behavior Analysis](https://github.com/Yuyz0112/claude-code-reverse) 
+  - Contains extracted prompts, tools, and workflow analysis
+  - Interactive visualization tool for understanding API interactions
+- [Community Examples](https://github.com/topics/claude-code-agents)
+
+### Implementation References
+- [Claude Code GitHub Actions](https://github.com/anthropics/claude-code-action)
+- [Awesome Claude Code Commands](https://github.com/hesreallyhim/awesome-claude-code)
+- [Claude Code Workflows](https://github.com/OneRedOak/claude-code-workflows)
 
 ---
 
